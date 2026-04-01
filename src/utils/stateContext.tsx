@@ -1,6 +1,6 @@
 "use client";
 
-import { TikTokPost } from "@/lib/types";
+import type { TikTokPost } from "@/lib/types";
 import React, { createContext, useCallback, useMemo, useState } from "react";
 
 interface StateContextProps {
@@ -8,6 +8,8 @@ interface StateContextProps {
   handleSetData: (value: TikTokPost | null) => void;
   submitted: boolean;
   handleSubmitted: (value: boolean) => void;
+  message: string | null;
+  handleMessage: (value: string | null) => void;
 }
 
 const StateContext = createContext<StateContextProps | null>(null);
@@ -17,6 +19,7 @@ const StateProvider: React.FC<{ children: React.ReactNode }> = ({
 }) => {
   const [data, setData] = useState<TikTokPost | null>(null);
   const [submitted, setSubmitted] = useState<boolean>(false);
+  const [message, setMessage] = useState<string | null>(null);
 
   const handleSetData = useCallback((value: TikTokPost | null) => {
     setData(value);
@@ -26,9 +29,20 @@ const StateProvider: React.FC<{ children: React.ReactNode }> = ({
     setSubmitted(value);
   }, []);
 
+  const handleMessage = useCallback((value: string | null) => {
+    setMessage(value);
+  }, []);
+
   const contextValue = useMemo(
-    () => ({ data, handleSetData, handleSubmitted, submitted }),
-    [data, handleSetData, handleSubmitted, submitted],
+    () => ({
+      data,
+      handleSetData,
+      submitted,
+      handleSubmitted,
+      message,
+      handleMessage,
+    }),
+    [data, handleSetData, submitted, handleSubmitted, message, handleMessage],
   );
 
   return (

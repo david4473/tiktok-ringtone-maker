@@ -1,81 +1,158 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import {
+  AlertCircle,
+  Download,
+  LoaderCircle,
+  Pause,
+  Play,
+  Scissors,
+  Waves,
+} from "lucide-react";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin, {
   Region,
 } from "wavesurfer.js/dist/plugins/regions.esm.js";
-import { Play, Pause, Download, Music } from "lucide-react";
 import useStateData from "@/hooks/useStateData";
 import { encodeWAV } from "@/utils/encodeWave";
-import { FFmpeg } from "@ffmpeg/ffmpeg";
 
 const Editor: React.FC = () => {
-  // refs
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const regionsRef = useRef<RegionsPlugin | null>(null);
   const ffmpegRef = useRef<FFmpeg | null>(null);
+  const messageRef = useRef<HTMLDivElement>(null);
+  const editorMessageKindRef = useRef<"default" | "ffmpeg-loading">("default");
 
-  // States
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [fileLoaded, setFileLoaded] = useState<boolean>(false);
-  const [fileName, setFileName] = useState<string>("");
   const [ffmpegLoaded, setFFmpegLoaded] = useState<boolean>(false);
+  const [ffmpegProgress, setFFmpegProgress] = useState<number>(0);
+  const [waveformLoading, setWaveformLoading] = useState<boolean>(false);
+  const [exportingFormat, setExportingFormat] = useState<
+    "ios" | "android" | null
+  >(null);
+  const [editorMessage, setEditorMessage] = useState<string | null>(null);
+  const [editorMessageKind, setEditorMessageKind] = useState<
+    "default" | "ffmpeg-loading"
+  >("default");
+  const [highlightMessage, setHighlightMessage] = useState<boolean>(false);
 
-  // Note: duration is used for logic but not rendered in this simplified UI
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [duration, setDuration] = useState<number>(0);
 
-  const { data, handleSubmitted } = useStateData();
+  const { data } = useStateData();
+  const fileLoaded = Boolean(data);
+  const fileName = data?.data.result.author.username ?? "";
+  const trackTitle = data?.data.result.music.title ?? "TikTok Audio";
+  const proxiedAudioUrl = data
+    ? `/api/audio?src=${encodeURIComponent(data.data.result.music.playUrl[0])}`
+    : null;
 
-  // Initialize FFmpeg on component mount
+  const focusMessage = useCallback(() => {
+    setHighlightMessage(true);
+
+    requestAnimationFrame(() => {
+      messageRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+      messageRef.current?.focus();
+    });
+
+    window.setTimeout(() => {
+      setHighlightMessage(false);
+    }, 1800);
+  }, []);
+
+  useEffect(() => {
+    editorMessageKindRef.current = editorMessageKind;
+  }, [editorMessageKind]);
+
   useEffect(() => {
     const loadFFmpeg = async () => {
       if (!ffmpegRef.current) {
-        const ffmpeg = new FFmpeg();
-        ffmpegRef.current = ffmpeg;
+        try {
+          const ffmpeg = new FFmpeg();
+          ffmpegRef.current = ffmpeg;
+          setFFmpegProgress(0.08);
 
-        // Logging ffmpeg: optional
-        ffmpeg.on("log", ({ message }) => {
-          console.log("[FFmpeg]", message);
-        });
+          ffmpeg.on("log", ({ message }) => {
+            console.log("[FFmpeg]", message);
+          });
 
-        await ffmpeg.load();
-        setFFmpegLoaded(true);
+          ffmpeg.on("progress", ({ progress }) => {
+            setFFmpegProgress((current) => Math.max(current, progress));
+          });
+
+          await ffmpeg.load();
+          setFFmpegProgress(1);
+          setFFmpegLoaded(true);
+          setEditorMessage(null);
+          setEditorMessageKind("default");
+        } catch (error) {
+          console.error("Failed to load FFmpeg", error);
+          setEditorMessageKind("default");
+          setEditorMessage(
+            "Audio conversion tools could not load. Refresh and try again.",
+          );
+        }
       }
     };
 
     loadFFmpeg();
   }, []);
 
-  // Initialize Wavesurfer
+  useEffect(() => {
+    if (ffmpegLoaded) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setFFmpegProgress((current) => {
+        if (current >= 0.92) {
+          return current;
+        }
+
+        return Math.min(0.92, current + 0.04);
+      });
+    }, 500);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [ffmpegLoaded]);
+
   useEffect(() => {
     if (waveformRef.current && !wavesurferRef.current) {
       wavesurferRef.current = WaveSurfer.create({
         container: waveformRef.current,
-        waveColor: "#104e64", //#C4B5FD // Soft Purple
-        progressColor: "#EC4899", // Darker Purple
-        cursorColor: "#EC4899", // Pink
+        waveColor: "#b8d6d8",
+        progressColor: "#ff6b4a",
+        cursorColor: "#0f3f45",
         barWidth: 3,
-        barRadius: 3,
-        height: 120,
+        barRadius: 6,
+        height: 136,
         normalize: true,
       });
 
-      // Add Regions Plugin
       const wsRegions = wavesurferRef.current.registerPlugin(
         RegionsPlugin.create(),
       );
       regionsRef.current = wsRegions;
 
-      wavesurferRef.current.on("decode", (d: number) => {
-        setDuration(d);
-        // Add a default 30s region
+      wavesurferRef.current.on("decode", (decodedDuration: number) => {
+        setDuration(decodedDuration);
+        setWaveformLoading(false);
+        setEditorMessage((current) =>
+          editorMessageKindRef.current === "ffmpeg-loading" ? current : null,
+        );
+        wsRegions.getRegions().forEach((region) => region.remove());
         wsRegions.addRegion({
           start: 0,
-          end: Math.min(30, d),
-          color: "rgba(0, 255, 255, 0.3)", // Pink with opacity
+          end: Math.min(30, decodedDuration),
+          color: "rgba(255, 107, 74, 0.18)",
           drag: true,
           resize: true,
         });
@@ -83,9 +160,15 @@ const Editor: React.FC = () => {
 
       wavesurferRef.current.on("play", () => setIsPlaying(true));
       wavesurferRef.current.on("pause", () => setIsPlaying(false));
+      wavesurferRef.current.on("error", (error) => {
+        console.error("Waveform load error", error);
+        setWaveformLoading(false);
+        setEditorMessageKind("default");
+        setEditorMessage(
+          "We couldn't prepare the waveform for that sound. Please try another link.",
+        );
+      });
 
-      // Force 30s limit logic on region update
-      // Edit to create longer duration
       wsRegions.on("region-updated", (region: Region) => {
         if (region.end - region.start > 30) {
           region.setOptions({ end: region.start + 30 });
@@ -106,34 +189,30 @@ const Editor: React.FC = () => {
     };
   }, []);
 
-  /*   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setFileName(file.name);
-      setFileLoaded(true);
-      const url = URL.createObjectURL(file);
-      console.log(url);
-
-      if (wavesurferRef.current) {
-        wavesurferRef.current.load(url);
-      }
-    }
-  }; */
-
   useEffect(() => {
     try {
-      if (data) {
-        setFileName(data?.data?.result?.author?.username);
-        setFileLoaded(true);
-
+      if (proxiedAudioUrl) {
         if (wavesurferRef.current) {
-          wavesurferRef.current.load(data.data.result.music.playUrl[0]);
+          setEditorMessage((current) =>
+            editorMessageKind === "ffmpeg-loading" ? current : null,
+          );
+          setWaveformLoading(true);
+          wavesurferRef.current.stop();
+          regionsRef.current?.getRegions().forEach((region) => region.remove());
+          wavesurferRef.current.load(proxiedAudioUrl);
         }
+      } else {
+        setWaveformLoading(false);
+        wavesurferRef.current?.stop();
+        regionsRef.current?.getRegions().forEach((region) => region.remove());
       }
     } catch (error) {
       console.log("error: ", error);
+      setWaveformLoading(false);
+      setEditorMessageKind("default");
+      setEditorMessage("Something went wrong while loading the editor.");
     }
-  }, [data]);
+  }, [editorMessageKind, proxiedAudioUrl]);
 
   const handlePlayPause = () => {
     if (wavesurferRef.current) {
@@ -141,31 +220,39 @@ const Editor: React.FC = () => {
     }
   };
 
-  // Logic to cut audio and download
   const handleExport = useCallback(
     async (format: "ios" | "android") => {
-      if (!wavesurferRef.current || !regionsRef.current || !ffmpegRef.current)
+      if (!wavesurferRef.current || !regionsRef.current || !ffmpegRef.current) {
         return;
+      }
 
-      // Get the first region (our selection)
       const regions = regionsRef.current.getRegions();
       if (regions.length === 0) {
-        alert("Please select a region first!");
+        setEditorMessageKind("default");
+        setEditorMessage("Drag the highlighted region to choose the snippet.");
         return;
       }
 
       if (!ffmpegLoaded) {
-        alert("Audio converter is still loading, please wait...");
+        setEditorMessageKind("ffmpeg-loading");
+        setEditorMessage("Audio converter is still loading. Give it a moment.");
+        focusMessage();
+        return;
       }
+
+      setEditorMessageKind("default");
+      setEditorMessage(null);
+      setExportingFormat(format);
 
       const region = regions[0];
       const start = region.start;
       const end = region.end;
-
-      // Get original AudioBuffer
       const originalBuffer = wavesurferRef.current.getDecodedData();
+
       if (!originalBuffer) {
-        alert("Audio data not ready yet.");
+        setEditorMessageKind("default");
+        setEditorMessage("Audio data is still preparing. Please wait a moment.");
+        setExportingFormat(null);
         return;
       }
 
@@ -175,7 +262,6 @@ const Editor: React.FC = () => {
       const endFrame = Math.floor(end * sampleRate);
       const frameCount = endFrame - startFrame;
 
-      // Interleave all channels (e.g. L,R,L,R... for stereo)
       const interleaved = new Float32Array(frameCount * numChannels);
       for (let channel = 0; channel < numChannels; channel++) {
         const channelData = originalBuffer.getChannelData(channel);
@@ -185,178 +271,232 @@ const Editor: React.FC = () => {
       }
 
       const wavData = encodeWAV(interleaved, sampleRate, numChannels);
-
-      // Convert DataView to a Uint8Array (respecting byteOffset/byteLength) so it's a valid BlobPart
       const wavUint8 = new Uint8Array(
-        // DataView.buffer is ArrayBufferLike in lib types, so create a Uint8Array view with proper offset/length
-        (wavData as DataView).buffer as ArrayBuffer,
-        (wavData as DataView).byteOffset,
-        (wavData as DataView).byteLength,
+        wavData.buffer as ArrayBuffer,
+        wavData.byteOffset,
+        wavData.byteLength,
       );
 
       try {
         const ffmpeg = ffmpegRef.current;
-
-        // Write WAV to FFmpeg's virtual filesystem
         await ffmpeg.writeFile("input.wav", wavUint8);
 
-        if (format == "ios") {
-          // iOS ringtones: AAC codec, M4A container, renamed to .m4r
-          // Max 40 seconds, fade in/out recommended
-
+        if (format === "ios") {
           await ffmpeg.exec([
             "-i",
             "input.wav",
             "-c:a",
-            "aac", // AAC codec
+            "aac",
             "-b:a",
-            "128k", // Bitrate
+            "128k",
             "-ar",
-            "44100", // Sample rate (iOS compatible)
+            "44100",
             "-ac",
-            "2", // Stereo
+            "2",
             "-f",
-            "ipod", // M4A container optimized for iPod/iOS
+            "ipod",
             "output.m4r",
           ]);
         } else {
-          // Android: MP3 format
           await ffmpeg.exec([
             "-i",
             "input.wav",
             "-c:a",
-            "libmp3lame", // MP3 codec
+            "libmp3lame",
             "-b:a",
-            "192k", // Bitrate
+            "192k",
             "-ar",
-            "44100", // Sample rate
+            "44100",
             "output.mp3",
           ]);
         }
 
-        // Read the output file
         const outputFilename = format === "ios" ? "output.m4r" : "output.mp3";
-        const data = (await ffmpeg.readFile(outputFilename)) as Uint8Array;
-
-        // Clone the data to ensure proper typing
-        const blobData = new Uint8Array(data);
-
-        // Create blob and download
-        const mimeType = format === "ios" ? "audio/mp4" : "audio/mpeg";
-        const blob = new Blob([blobData], { type: mimeType });
+        const outputData = (await ffmpeg.readFile(outputFilename)) as Uint8Array;
+        const blob = new Blob([new Uint8Array(outputData)], {
+          type: format === "ios" ? "audio/mp4" : "audio/mpeg",
+        });
         const url = URL.createObjectURL(blob);
 
-        const a = document.createElement("a");
-        a.style.display = "none";
-        a.href = url;
-        a.download = `ringtone-${Date.now()}.${format === "ios" ? "m4r" : "mp3"}`;
-        document.body.appendChild(a);
-        a.click();
+        const anchor = document.createElement("a");
+        anchor.style.display = "none";
+        anchor.href = url;
+        anchor.download = `ringtone-${Date.now()}.${format === "ios" ? "m4r" : "mp3"}`;
+        document.body.appendChild(anchor);
+        anchor.click();
 
         setTimeout(() => {
           window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
+          document.body.removeChild(anchor);
         }, 100);
 
-        // Clean up FFmpeg virtual filesystem
         await ffmpeg.deleteFile("input.wav");
         await ffmpeg.deleteFile(outputFilename);
       } catch (error) {
         console.error("FFmpeg conversion error:", error);
-        alert("Failed to convert audio. Please try again.");
+        setEditorMessageKind("default");
+        setEditorMessage("Export failed. Please try again.");
+      } finally {
+        setExportingFormat(null);
       }
     },
-    [ffmpegLoaded],
+    [ffmpegLoaded, focusMessage],
   );
 
   return (
-    <div className="w-full lg:mt-8 bg-cyan-50 flex items-center justify-center sm:p-3 font-sans">
-      <div className="bg-white w-full max-w-2xl rounded-[2rem] shadow-xl overflow-hidden border-4 border-white">
-        {/* Header */}
-        <div className="p-8 space-y-8">
-          {/* Upload */}
-          {/*           {!fileLoaded && (
-            <div className="border-4 border-dashed border-pink-200 rounded-3xl p-10 flex flex-col items-center justify-center bg-pink-50/50 hover:bg-pink-100/50 transition-colors cursor-pointer relative">
-              <input
-                type="file"
-                accept="audio/*"
-                onChange={handleFileUpload}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <div className="bg-white p-4 rounded-full shadow-md mb-4">
-                <Upload className="text-pink-400 w-8 h-8" />
-              </div>
-              <p className="text-pink-400 font-bold text-lg">
-                Drop your bop here
-              </p>
-              <p className="text-pink-300 text-sm">MP3, WAV, or FLAC</p>
-            </div>
-          )} */}
+    <div className="tone-panel w-full px-5 py-5 sm:px-6 sm:py-6">
+      <div className={fileLoaded ? "block" : "hidden"}>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--tone-ink-soft)]">
+              Now trimming
+            </p>
+            <h2 className="mt-2 text-2xl font-black tracking-[-0.04em] text-[var(--tone-ink)] sm:text-3xl">
+              {trackTitle}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--tone-ink-soft)]">
+              Sound from <span className="font-semibold text-[var(--tone-ink)]">{fileName}</span>.
+              Resize the highlighted band until the cut feels right.
+            </p>
+          </div>
+          <div className="rounded-[1.4rem] border border-[rgba(255,107,74,0.22)] bg-[var(--tone-accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--tone-ink)] shadow-[0_10px_24px_-20px_rgba(255,107,74,0.35)]">
+            Max 30 seconds
+          </div>
+        </div>
 
-          {/* Editor */}
-          <div className={fileLoaded ? "block" : "hidden"}>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center space-x-2 bg-cyan-50 px-4 py-2 rounded-full">
-                <Music className="w-4 h-4 text-cyan-900" />
-                <span className="text-cyan-900 font-medium truncate max-w-[150px]">
-                  {fileName}
-                </span>
-              </div>
-              <div className="text-xs font-bold text-cyan-900 uppercase tracking-widest bg-cyan-100 px-3 py-1 rounded-full">
-                Max 30s
-              </div>
-            </div>
-
-            {/* Waveform Container */}
-            <div
-              ref={waveformRef}
-              className="w-full rounded-xl overflow-hidden bg-cyan-50 border-2 border-cyan-100 mb-6"
-            />
-
-            {/* Controls */}
-            <div className="flex justify-center mb-8">
-              <button
-                onClick={handlePlayPause}
-                className="bg-cyan-500 hover:bg-cyan-600 text-white rounded-full p-4 shadow-lg hover:shadow-xl hover:scale-105 transition-all"
-              >
-                {isPlaying ? (
-                  <Pause fill="currentColor" />
-                ) : (
-                  <Play fill="currentColor" className="ml-1" />
-                )}
-              </button>
-            </div>
-
-            {/* Step 3: Export */}
-            <div className="border-t-2 border-gray-100 pt-6">
-              <p className="text-center text-gray-400 mb-4 text-sm font-medium">
-                Ready to export? Pick your device!
-              </p>
-              <div className="flex gap-4">
-                <button
-                  onClick={() => handleExport("ios")}
-                  className="flex-1 group relative bg-white border-2 border-blue-200 hover:border-blue-400 rounded-2xl p-4 flex flex-col items-center transition-all hover:-translate-y-1"
-                >
-                  <div className="bg-blue-100 p-2 rounded-full mb-2 group-hover:bg-blue-200 transition-colors">
-                    <Download className="text-blue-500 w-6 h-6" />
-                  </div>
-                  <span className="text-blue-500 font-bold">iPhone</span>
-                  <span className="text-blue-300 text-xs">.m4r</span>
-                </button>
-
-                <button
-                  onClick={() => handleExport("android")}
-                  className="flex-1 group relative bg-white border-2 border-green-200 hover:border-green-400 rounded-2xl p-4 flex flex-col items-center transition-all hover:-translate-y-1"
-                >
-                  <div className="bg-green-100 p-2 rounded-full mb-2 group-hover:bg-green-200 transition-colors">
-                    <Download className="text-green-500 w-6 h-6" />
-                  </div>
-                  <span className="text-green-500 font-bold">Android</span>
-                  <span className="text-green-300 text-xs">.mp3</span>
-                </button>
+        {editorMessage ? (
+          <div
+            ref={messageRef}
+            tabIndex={-1}
+            role="alert"
+            aria-live="polite"
+            className={`mt-4 overflow-hidden rounded-[1.4rem] border border-[var(--tone-error-border)] bg-[var(--tone-error-bg)] text-sm text-[var(--tone-error-text)] outline-none transition-shadow ${
+              highlightMessage ? "tone-pulse-ring" : ""
+            }`}
+          >
+            <div className="relative">
+              {editorMessageKind === "ffmpeg-loading" ? (
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-y-0 left-0 bg-[color:color-mix(in_srgb,var(--tone-accent)_18%,transparent)] transition-[width] duration-300"
+                  style={{ width: `${Math.round(ffmpegProgress * 100)}%` }}
+                />
+              ) : null}
+              <div className="relative flex items-start gap-3 px-4 py-4">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p>{editorMessage}</p>
+                  {editorMessageKind === "ffmpeg-loading" ? (
+                    <div className="mt-3">
+                      <div className="h-2 overflow-hidden rounded-full bg-white/75 ring-1 ring-[rgba(255,107,74,0.14)]">
+                        <div
+                          className="h-full rounded-full bg-[var(--tone-accent)] transition-[width] duration-300"
+                          style={{ width: `${Math.round(ffmpegProgress * 100)}%` }}
+                        />
+                      </div>
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:color-mix(in_srgb,var(--tone-error-text)_82%,white)]">
+                        Converter loading {Math.round(ffmpegProgress * 100)}%
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>
+        ) : null}
+
+        <div className="mt-5 rounded-[1.8rem] border border-[var(--tone-border-strong)] bg-[var(--tone-surface)] p-4 shadow-[0_18px_36px_-30px_rgba(20,63,69,0.14)]">
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-[var(--tone-ink-soft)]">
+            <Waves className="h-4 w-4" />
+            Region selector
+          </div>
+          <div className="relative">
+            <div
+              ref={waveformRef}
+              className="min-h-[8.5rem] w-full overflow-hidden rounded-[1.4rem] border border-[var(--tone-border-strong)] bg-[var(--tone-wave-bg)] px-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
+            />
+            {waveformLoading ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-[1.4rem] bg-[rgba(245,251,251,0.94)]">
+                <LoaderCircle className="h-7 w-7 animate-spin text-[var(--tone-accent)]" />
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-[var(--tone-ink)]">
+                    Preparing trim handles
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--tone-ink-soft)]">
+                    The waveform and draggable region will appear in a moment.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-center gap-3 rounded-[1.5rem] border border-[var(--tone-border)] bg-[var(--tone-surface)] px-4 py-4 text-sm text-[var(--tone-ink-soft)] shadow-[0_14px_28px_-26px_rgba(20,63,69,0.18)]">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(255,107,74,0.22)] bg-[var(--tone-accent-soft)] text-[var(--tone-accent)]">
+            <Scissors className="h-4 w-4" />
+          </div>
+          Drag either edge of the highlighted region to choose the exact snippet.
+        </div>
+
+        <div className="mt-6 flex justify-center">
+          <button
+            onClick={handlePlayPause}
+            disabled={waveformLoading}
+            aria-label={isPlaying ? "Pause audio preview" : "Play audio preview"}
+            className="inline-flex h-16 w-16 items-center justify-center rounded-full border border-[rgba(255,255,255,0.3)] bg-[var(--tone-ink)] text-white shadow-[0_18px_32px_-18px_rgba(15,63,69,0.5)] transition hover:bg-[var(--tone-accent)] disabled:cursor-not-allowed disabled:border-transparent disabled:bg-[var(--tone-muted)]"
+          >
+            {isPlaying ? (
+              <Pause fill="currentColor" className="h-5 w-5" />
+            ) : (
+              <Play fill="currentColor" className="ml-0.5 h-5 w-5" />
+            )}
+          </button>
+        </div>
+
+        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          <button
+            onClick={() => handleExport("ios")}
+            disabled={waveformLoading || exportingFormat !== null}
+            className="rounded-[1.8rem] border border-[var(--tone-border-strong)] bg-[var(--tone-surface)] p-5 text-left shadow-[0_16px_32px_-28px_rgba(20,63,69,0.16)] transition hover:border-[var(--tone-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--tone-ink-soft)]">
+                iPhone
+              </p>
+              {exportingFormat === "ios" ? (
+                <LoaderCircle className="h-5 w-5 animate-spin text-[var(--tone-accent)]" />
+              ) : (
+                <Download className="h-5 w-5 text-[var(--tone-accent)]" />
+              )}
+            </div>
+            <p className="mt-4 text-3xl font-black tracking-[-0.04em] text-[var(--tone-ink)]">
+              .m4r
+            </p>
+            <p className="mt-2 text-sm leading-6 text-[var(--tone-ink-soft)]">
+              Export a ringtone file for the iPhone import workflow.
+            </p>
+          </button>
+
+          <button
+            onClick={() => handleExport("android")}
+            disabled={waveformLoading || exportingFormat !== null}
+            className="rounded-[1.8rem] border border-[rgba(255,255,255,0.3)] bg-[var(--tone-accent)] p-5 text-left text-white shadow-[0_20px_36px_-24px_rgba(255,107,74,0.48)] transition hover:bg-[var(--tone-accent-deep)] disabled:cursor-not-allowed disabled:border-transparent disabled:opacity-60"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/75">
+                Android
+              </p>
+              {exportingFormat === "android" ? (
+                <LoaderCircle className="h-5 w-5 animate-spin text-white" />
+              ) : (
+                <Download className="h-5 w-5 text-white" />
+              )}
+            </div>
+            <p className="mt-4 text-3xl font-black tracking-[-0.04em]">.mp3</p>
+            <p className="mt-2 text-sm leading-6 text-white/80">
+              Export a clean MP3 for Android ringtone settings.
+            </p>
+          </button>
         </div>
       </div>
     </div>

@@ -1,0 +1,21 @@
+{
+  "node": {
+    "40c54abb797c803cedbe90dab42b2a4cdba1a54637": {
+      "workers": {
+        "app/page": {
+          "moduleId": 33442,
+          "async": false,
+          "exportedName": "formAction",
+          "filename": "src/utils/form-action.ts"
+        }
+      },
+      "layer": {
+        "app/page": "action-browser"
+      },
+      "filename": "src/utils/form-action.ts",
+      "exportedName": "formAction"
+    }
+  },
+  "edge": {},
+  "encryptionKey": "qR5bI+xbKEJIljDS4n7/ZSCa/lhWHT3OqximZNO5Pkg="
+}

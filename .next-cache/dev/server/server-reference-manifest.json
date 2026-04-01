@@ -1,0 +1,21 @@
+{
+  "node": {
+    "40e1800a5cd4c9f710245f10518bd03c061561ce1c": {
+      "workers": {
+        "app/page": {
+          "moduleId": "[project]/.next-internal/server/app/page/actions.js { ACTIONS_MODULE0 => \"[project]/src/utils/form-action.ts [app-rsc] (ecmascript)\" } [app-rsc] (server actions loader, ecmascript)",
+          "async": false,
+          "exportedName": "formAction",
+          "filename": "src/utils/form-action.ts"
+        }
+      },
+      "layer": {
+        "app/page": "action-browser"
+      },
+      "filename": "src/utils/form-action.ts",
+      "exportedName": "formAction"
+    }
+  },
+  "edge": {},
+  "encryptionKey": "TkC+zfaNF6PZfd3B+fouQTNLsLChuCoY8OoVzrpEebA="
+}
