@@ -37,7 +37,11 @@ export async function GET(request: NextRequest) {
 
   try {
     const upstream = await fetch(sourceUrl, {
-      headers: range ? { Range: range } : undefined,
+      headers: {
+        ...(range ? { Range: range } : {}),
+        // Ask the CDN for an uncompressed byte stream so Range math stays valid.
+        "Accept-Encoding": "identity",
+      },
       redirect: "follow",
       cache: "no-store",
     });
@@ -53,6 +57,9 @@ export async function GET(request: NextRequest) {
     const contentRange = upstream.headers.get("content-range");
     const acceptRanges = upstream.headers.get("accept-ranges");
     const cacheControl = upstream.headers.get("cache-control");
+    const contentDisposition = upstream.headers.get("content-disposition");
+    const etag = upstream.headers.get("etag");
+    const lastModified = upstream.headers.get("last-modified");
 
     responseHeaders.set("Content-Type", contentType);
 
@@ -64,8 +71,18 @@ export async function GET(request: NextRequest) {
       responseHeaders.set("Content-Range", contentRange);
     }
 
-    if (acceptRanges) {
-      responseHeaders.set("Accept-Ranges", acceptRanges);
+    responseHeaders.set("Accept-Ranges", acceptRanges ?? "bytes");
+
+    if (contentDisposition) {
+      responseHeaders.set("Content-Disposition", contentDisposition);
+    }
+
+    if (etag) {
+      responseHeaders.set("ETag", etag);
+    }
+
+    if (lastModified) {
+      responseHeaders.set("Last-Modified", lastModified);
     }
 
     responseHeaders.set("Cache-Control", cacheControl ?? "no-store");
