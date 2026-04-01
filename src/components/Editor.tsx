@@ -25,6 +25,8 @@ const Editor: React.FC = () => {
   const ffmpegRef = useRef<FFmpeg | null>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const editorMessageKindRef = useRef<"default" | "ffmpeg-loading">("default");
+  const audioObjectUrlRef = useRef<string | null>(null);
+  const audioLoadAbortRef = useRef<AbortController | null>(null);
 
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [ffmpegLoaded, setFFmpegLoaded] = useState<boolean>(false);
@@ -182,6 +184,13 @@ const Editor: React.FC = () => {
     }
 
     return () => {
+      audioLoadAbortRef.current?.abort();
+
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+        audioObjectUrlRef.current = null;
+      }
+
       if (wavesurferRef.current) {
         wavesurferRef.current.destroy();
         wavesurferRef.current = null;
@@ -190,29 +199,77 @@ const Editor: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    try {
-      if (proxiedAudioUrl) {
-        if (wavesurferRef.current) {
-          setEditorMessage((current) =>
-            editorMessageKind === "ffmpeg-loading" ? current : null,
-          );
-          setWaveformLoading(true);
-          wavesurferRef.current.stop();
-          regionsRef.current?.getRegions().forEach((region) => region.remove());
-          wavesurferRef.current.load(proxiedAudioUrl);
-        }
-      } else {
+    const loadWaveform = async () => {
+      if (!wavesurferRef.current) {
+        return;
+      }
+
+      audioLoadAbortRef.current?.abort();
+      audioLoadAbortRef.current = null;
+
+      if (audioObjectUrlRef.current) {
+        URL.revokeObjectURL(audioObjectUrlRef.current);
+        audioObjectUrlRef.current = null;
+      }
+
+      if (!proxiedAudioUrl) {
         setWaveformLoading(false);
         wavesurferRef.current?.stop();
         regionsRef.current?.getRegions().forEach((region) => region.remove());
+        return;
       }
-    } catch (error) {
-      console.log("error: ", error);
-      setWaveformLoading(false);
-      setEditorMessageKind("default");
-      setEditorMessage("Something went wrong while loading the editor.");
-    }
-  }, [editorMessageKind, proxiedAudioUrl]);
+
+      const abortController = new AbortController();
+      audioLoadAbortRef.current = abortController;
+
+      try {
+        setEditorMessage((current) =>
+          editorMessageKindRef.current === "ffmpeg-loading" ? current : null,
+        );
+        setWaveformLoading(true);
+        wavesurferRef.current.stop();
+        regionsRef.current?.getRegions().forEach((region) => region.remove());
+
+        const response = await fetch(proxiedAudioUrl, {
+          cache: "no-store",
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Audio download failed with status ${response.status}`);
+        }
+
+        const audioBlob = await response.blob();
+        const objectUrl = URL.createObjectURL(audioBlob);
+
+        if (abortController.signal.aborted) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+
+        audioObjectUrlRef.current = objectUrl;
+        wavesurferRef.current.load(objectUrl);
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          return;
+        }
+
+        console.error("Waveform source download error", error);
+        setWaveformLoading(false);
+        setEditorMessageKind("default");
+        setEditorMessage(
+          "We couldn't download that sound reliably. Check your network and try again.",
+        );
+      }
+    };
+
+    loadWaveform();
+
+    return () => {
+      audioLoadAbortRef.current?.abort();
+      audioLoadAbortRef.current = null;
+    };
+  }, [proxiedAudioUrl]);
 
   const handlePlayPause = () => {
     if (wavesurferRef.current) {
